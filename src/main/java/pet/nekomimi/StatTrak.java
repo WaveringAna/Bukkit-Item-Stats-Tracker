@@ -70,8 +70,10 @@ public class StatTrak extends JavaPlugin implements Listener {
         
         ItemStack weapon = killer.getInventory().getItemInMainHand();
         if (ItemType.WEAPON.matches(weapon.getType())) {
-            int currentKills = (int) getStatValue(weapon, "StatTrak™ Kills").doubleValue();
-            updateStats(weapon, new StatUpdate("StatTrak™ Kills", currentKills + 1));
+            updateItemStats(weapon, Map.of(
+                "StatTrak™ Kills", 
+                getStatValue(weapon, "StatTrak™ Kills").doubleValue() + 1
+            ));
             killer.getInventory().setItemInMainHand(weapon);
         }
     }
@@ -82,8 +84,10 @@ public class StatTrak extends JavaPlugin implements Listener {
         ItemStack tool = player.getInventory().getItemInMainHand();
         
         if (ItemType.TOOL.matches(tool.getType())) {
-            int currentMined = (int) getStatValue(tool, "StatTrak™ Blocks Mined").doubleValue();
-            updateStats(tool, new StatUpdate("StatTrak™ Blocks Mined", currentMined + 1));
+            updateItemStats(tool, Map.of(
+                "StatTrak™ Blocks Mined", 
+                getStatValue(tool, "StatTrak™ Blocks Mined").doubleValue() + 1
+            ));
             player.getInventory().setItemInMainHand(tool);
         }
     }
@@ -97,57 +101,70 @@ public class StatTrak extends JavaPlugin implements Listener {
         
         if (armor == null) return;
         
-        int trackablePieces = (int) Arrays.stream(armor)
-            .filter(item -> item != null && ItemType.ARMOR.matches(item.getType()))
-            .count();
-            
+        // Count trackable pieces and prepare updates in one pass
+        Map<ItemStack, Double> updates = new HashMap<>();
+        int trackablePieces = 0;
+        
+        for (ItemStack item : armor) {
+            if (item != null && ItemType.ARMOR.matches(item.getType())) {
+                trackablePieces++;
+                updates.put(item, getStatValue(item, "StatTrak™ Damage Taken").doubleValue());
+            }
+        }
+        
         if (trackablePieces > 0) {
             double damagePerPiece = damage / trackablePieces;
             
-            Arrays.stream(armor)
-                .filter(item -> item != null && ItemType.ARMOR.matches(item.getType()))
-                .forEach(item -> {
-                    double currentDamage = getStatValue(item, "StatTrak™ Damage Taken").doubleValue();
-                    double newTotal = Math.round((currentDamage + damagePerPiece) * 10.0) / 10.0;
-                    updateStats(item, new StatUpdate("StatTrak™ Damage Taken", newTotal));
-                });
+            // Apply updates in batch
+            updates.forEach((item, currentDamage) -> {
+                double newTotal = Math.round((currentDamage + damagePerPiece) * 10.0) / 10.0;
+                updateItemStats(item, Map.of("StatTrak™ Damage Taken", newTotal));
+            });
                 
             player.getInventory().setArmorContents(armor);
         }
     }
 
-    private void updateStats(ItemStack item, StatUpdate... updates) {
+    private void updateItemStats(ItemStack item, Map<String, Number> updates) {
         ItemMeta meta = item.getItemMeta();
         if (meta == null) return;
 
         List<String> lore = meta.hasLore() ? new ArrayList<>(meta.getLore()) : new ArrayList<>();
+        Map<String, Integer> statIndices = new HashMap<>();
         
-        for (StatUpdate update : updates) {
-            String statDisplay = String.format("§d %s: %s", 
-                update.displayName,
-                update.value instanceof Double ? String.format("%.1f", update.value) : update.value);
-            
-            updateOrAddLoreLine(lore, update.displayName, statDisplay);
-        }
-        
-        meta.setLore(lore);
-        item.setItemMeta(meta);
-    }
-
-    private void updateOrAddLoreLine(List<String> lore, String statName, String newLine) {
-        int index = -1;
+        // First pass: find all stat indices
         for (int i = 0; i < lore.size(); i++) {
-            if (lore.get(i).contains(statName)) {
-                index = i;
-                break;
+            String line = lore.get(i);
+            for (String statName : updates.keySet()) {
+                if (line.contains(statName)) {
+                    statIndices.put(statName, i);
+                    break;
+                }
             }
         }
         
-        if (index != -1) {
-            lore.set(index, newLine);
-        } else {
-            lore.add(newLine);
-        }
+        // Second pass: update or add stats
+        updates.forEach((statName, value) -> {
+            String formattedValue;
+            double doubleValue = value.doubleValue();
+            if (doubleValue == Math.floor(doubleValue)) {
+                formattedValue = String.format("%d", (int)doubleValue);
+            } else {
+                formattedValue = String.format("%.1f", doubleValue);
+            }
+            
+            String statDisplay = String.format("§d %s: %s", statName, formattedValue);
+            
+            Integer index = statIndices.get(statName);
+            if (index != null) {
+                lore.set(index, statDisplay);
+            } else {
+                lore.add(statDisplay);
+            }
+        });
+        
+        meta.setLore(lore);
+        item.setItemMeta(meta);
     }
 
     private Number getStatValue(ItemStack item, String statName) {
